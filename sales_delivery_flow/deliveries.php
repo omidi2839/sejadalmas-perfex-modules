@@ -1,0 +1,6 @@
+<?php defined('BASEPATH') or exit('No direct script access allowed'); init_head(); ?>
+<div id="wrapper"><div class="content"><div class="panel_s"><div class="panel-body">
+<h4 class="no-margin"><i class="fa fa-check-square-o"></i> تحویل کالا به مشتری</h4><p class="text-muted mtop10">فاکتورهایی که حداقل یک حواله خروج انبار دارند و آماده ثبت یا پیگیری تحویل مشتری هستند.</p><hr class="hr-panel-heading">
+<table class="table dt-table"><thead><tr><th>فاکتور</th><th>تاریخ فاکتور</th><th>رسیدهای خروج</th><th>رسیدهای تحویل</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
+<?php foreach($invoices as $i){ ?><tr><td><?php echo html_escape($i['number']); ?></td><td><?php echo html_escape($i['display_date']??$i['date']); ?></td><td><?php echo (int)$i['warehouse_count']; ?></td><td><?php echo (int)$i['customer_count']; ?></td><td><span class="label label-<?php echo $i['customer_count']?'success':'warning'; ?>"><?php echo $i['customer_count']?'تحویل ثبت شده':'در انتظار تحویل'; ?></span></td><td><a class="btn btn-default btn-sm" href="<?php echo admin_url('sales_delivery_flow/invoice/'.$i['id']); ?>"><?php echo $i['customer_count']?'مشاهده / ثبت تحویل جدید':'ثبت تحویل مشتری'; ?></a></td></tr><?php } ?>
+</tbody></table></div></div></div></div><?php init_tail(); ?>
