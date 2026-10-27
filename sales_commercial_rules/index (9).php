@@ -1,0 +1,1 @@
+<?php defined('BASEPATH') or exit('No direct script access allowed'); redirect(admin_url('sales_commercial_rules/online_promotion?tab=categories')); ?>
