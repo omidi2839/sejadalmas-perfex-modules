@@ -648,52 +648,150 @@ class Sales_commercial_rules_model extends App_Model{
 
 
  public function scr_goals_schema(){
-  $t=db_prefix().'scr_monthly_goals';
-  if(!$this->db->table_exists($t))$this->db->query("CREATE TABLE `{$t}` (`id` INT NOT NULL AUTO_INCREMENT,`month` CHAR(7) NOT NULL,`role` VARCHAR(12) NOT NULL,`staff_id` INT NOT NULL,`sale_type_id` INT NOT NULL DEFAULT 0,`target_amount` DECIMAL(18,2) NOT NULL DEFAULT 0,`created_at` DATETIME NULL,`updated_at` DATETIME NULL,PRIMARY KEY (`id`),UNIQUE KEY `goal_key` (`month`,`role`,`staff_id`,`sale_type_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
- }
- public function scr_goal_month_status($month){
-  $this->scr_goals_schema();$t=db_prefix().'scr_goal_month_closures';
-  if(!$this->db->table_exists($t))$this->db->query("CREATE TABLE `{$t}` (`month` CHAR(7) NOT NULL PRIMARY KEY,`snapshot` LONGTEXT NOT NULL,`closed_at` DATETIME NOT NULL,`closed_by` INT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-  return $this->db->where('month',$month)->get($t)->row_array();
- }
- public function scr_goal_close_month($month,$staffId){
-  if(!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$month))return false;
-  if($this->scr_goal_month_status($month))return false;
-  $rows=$this->scr_goals_report($month);
-  return $this->db->insert(db_prefix().'scr_goal_month_closures',['month'=>$month,'snapshot'=>json_encode($rows,JSON_UNESCAPED_UNICODE),'closed_at'=>date('Y-m-d H:i:s'),'closed_by'=>(int)$staffId]);
- }
- public function scr_goal_reopen_month($month){
-  $this->scr_goal_month_status($month);
-  return $this->db->where('month',$month)->delete(db_prefix().'scr_goal_month_closures');
- }
- public function scr_goals_save($d){
-  $this->scr_goals_schema();$month=trim((string)($d['month']??''));if($this->scr_goal_month_status($month))return ['ok'=>false,'message'=>'گزارش ماه بسته شده است'];$role=($d['role']??'seller')==='manager'?'manager':'seller';$staff=(int)($d['staff_id']??0);$type=(int)($d['sale_type_id']??0);$amount=$this->num($d['target_amount']??'');
-  if(!preg_match('/^20[0-9]{2}-(0[1-9]|1[0-2])$/',$month)||!$staff||$amount===null||$amount<0)return ['ok'=>false,'message'=>'ماه، کارمند یا مبلغ هدف نامعتبر است'];
-  if(!$this->db->where('staffid',$staff)->get(db_prefix().'staff')->row())return ['ok'=>false,'message'=>'کارمند یافت نشد'];
-  $t=db_prefix().'scr_monthly_goals';$key=['month'=>$month,'role'=>$role,'staff_id'=>$staff,'sale_type_id'=>$type];$old=$this->db->where($key)->get($t)->row_array();$now=date('Y-m-d H:i:s');
-  if($old)$this->db->where('id',$old['id'])->update($t,['target_amount'=>$amount,'updated_at'=>$now]);else $this->db->insert($t,$key+['target_amount'=>$amount,'created_at'=>$now,'updated_at'=>$now]);return ['ok'=>true];
- }
- public function scr_goals_delete($id){$this->scr_goals_schema();$goal=$this->db->where('id',(int)$id)->get(db_prefix().'scr_monthly_goals')->row_array();if(!$goal||$this->scr_goal_month_status($goal['month']))return false;return $this->db->where('id',(int)$id)->delete(db_prefix().'scr_monthly_goals');}
- public function scr_goals_copy($from,$to){
-  $this->scr_goals_schema();if(!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$from)||!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$to)||$from===$to)return 0;
-  $rows=$this->db->where('month',$from)->get(db_prefix().'scr_monthly_goals')->result_array();if($this->scr_goal_month_status($to))return 0;$n=0;
-  foreach($rows as $r){$key=['month'=>$to,'role'=>$r['role'],'staff_id'=>$r['staff_id'],'sale_type_id'=>$r['sale_type_id']];if($this->db->where($key)->get(db_prefix().'scr_monthly_goals')->row())continue;$this->db->insert(db_prefix().'scr_monthly_goals',$key+['target_amount'=>$r['target_amount'],'created_at'=>date('Y-m-d H:i:s')]);$n++;}return $n;
- }
- public function scr_goals_report($month){
-  $closed=$this->scr_goal_month_status($month);if($closed){$snapshot=json_decode($closed['snapshot'],true);return is_array($snapshot)?$snapshot:[];}
-  $this->scr_goals_schema();$t=db_prefix().'scr_monthly_goals';$goals=$this->db->select("g.*,CONCAT(s.firstname,' ',s.lastname) staff_name,st.name sale_type_name",false)->from($t.' g')->join(db_prefix().'staff s','s.staffid=g.staff_id','left')->join(db_prefix().'scr_sale_types st','st.legacy_id=g.sale_type_id OR st.id=g.sale_type_id','left')->where('g.month',$month)->order_by('g.role','ASC')->order_by('g.staff_id','ASC')->get()->result_array();
-  $start=$month.'-01';$end=date('Y-m-d',strtotime($start.' +1 month'));$p=db_prefix().'invoicepaymentrecords';$i=db_prefix().'invoices';$totals=[];
-  if($this->db->table_exists($p)&&$this->db->table_exists($i)){
-   $sf=$this->db->field_exists('sale_agent',$i)?'sale_agent':'addedfrom';$tf=$this->db->field_exists('invoice_type',$i)?'invoice_type':($this->db->field_exists('sale_type_id',$i)?'sale_type_id':null);
-   $select='i.'.$sf.' seller_id,'.($tf?'i.'.$tf:'0').' sale_type_id,SUM(p.amount) amount';
-   $q=$this->db->select($select,false)->from($p.' p')->join($i.' i','i.id=p.invoiceid')->where('p.date >=',$start)->where('p.date <',$end)->where('p.amount >',0);
-   if($this->db->field_exists('status',$i))$q->where('i.status !=',5);
-   foreach($q->group_by(['i.'.$sf]+($tf?['i.'.$tf]:[]))->get()->result_array() as $r){$sid=(int)$r['seller_id'];$type=(int)$r['sale_type_id'];if($sid>0)$totals[$sid][$type]=($totals[$sid][$type]??0)+(float)$r['amount'];}
+  $t=db_prefix().'scr_goal_period_targets';
+  if(!$this->db->table_exists($t)){
+   $sql="CREATE TABLE IF NOT EXISTS `{$t}` (`id` INT NOT NULL AUTO_INCREMENT,`start_date` DATE NOT NULL,`end_date` DATE NOT NULL,`role` VARCHAR(12) NOT NULL,`staff_id` INT NOT NULL,`sale_type_id` INT NOT NULL DEFAULT 0,`target_amount` DECIMAL(18,2) NOT NULL DEFAULT 0,`legacy_goal_id` INT NULL,`created_at` DATETIME NULL,`updated_at` DATETIME NULL,PRIMARY KEY (`id`),UNIQUE KEY `period_goal_key` (`start_date`,`end_date`,`role`,`staff_id`,`sale_type_id`),UNIQUE KEY `legacy_goal_key` (`legacy_goal_id`),KEY `period_dates` (`start_date`,`end_date`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+   if(!$this->db->query($sql))return false;
   }
-  $hier=[];$h=db_prefix().'scr_sales_hierarchy';if($this->db->table_exists($h))foreach($this->db->where('active',1)->get($h)->result_array() as $r)$hier[(int)$r['manager_staff_id']][(int)$r['seller_staff_id']]=true;
-  foreach($goals as &$g){$staff=(int)$g['staff_id'];$type=(int)$g['sale_type_id'];$members=$g['role']==='manager'?array_keys($hier[$staff]??[]):[$staff];$actual=0;
+  $cl=db_prefix().'scr_goal_period_closures';
+  if(!$this->db->table_exists($cl)){
+   if(!$this->db->query("CREATE TABLE IF NOT EXISTS `{$cl}` (`start_date` DATE NOT NULL,`end_date` DATE NOT NULL,`snapshot` LONGTEXT NOT NULL,`closed_at` DATETIME NOT NULL,`closed_by` INT NOT NULL,PRIMARY KEY (`start_date`,`end_date`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"))return false;
+  }
+  // Idempotent one-time copy; retain the old tables and their closed snapshots.
+  // Mark the migration complete only after a successful transaction.
+  if((string)get_option('scr_goal_period_migrated_v1')!=='1'){
+   $old=db_prefix().'scr_monthly_goals';
+   $rows=$this->db->table_exists($old)?$this->db->get($old)->result_array():[];
+   $this->db->trans_begin();
+   foreach($rows as $row){
+    $month=(string)($row['month']??'');
+    if(!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$month))continue;
+    $start=$month.'-01';$finish=date('Y-m-t',strtotime($start));
+    $key=['start_date'=>$start,'end_date'=>$finish,'role'=>$row['role'],'staff_id'=>(int)$row['staff_id'],'sale_type_id'=>(int)$row['sale_type_id']];
+    if($this->db->where($key)->get($t)->row())continue;
+    $this->db->insert($t,$key+['target_amount'=>$row['target_amount'],'legacy_goal_id'=>(int)$row['id'],'created_at'=>$row['created_at']??date('Y-m-d H:i:s'),'updated_at'=>$row['updated_at']??date('Y-m-d H:i:s')]);
+    if($this->db->trans_status()===false)break;
+   }
+   if($this->db->trans_status()===false){$this->db->trans_rollback();return false;}
+   $this->db->trans_commit();
+   if((string)get_option('scr_goal_period_migrated_v1')!=='1'){
+    // Perfex can return '' for an option that does not exist.
+    // Try insert first; when present, update it. Never mark before DB commit.
+    if(!add_option('scr_goal_period_migrated_v1','1'))update_option('scr_goal_period_migrated_v1','1');
+   }
+  }
+  return true;
+ }
+ public function scr_goal_valid_dates($start,$end){
+  $start=trim((string)$start);$end=trim((string)$end);
+  foreach([$start,$end] as $x){
+   if(!preg_match('/^20\\d{2}-\\d{2}-\\d{2}$/D',$x))return false;
+   $d=DateTimeImmutable::createFromFormat('!Y-m-d',$x);
+   if(!$d||$d->format('Y-m-d')!==$x)return false;
+  }
+  return $start<=$end;
+ }
+ private function scr_goal_legacy_month($start,$end){
+  if(!$this->scr_goal_valid_dates($start,$end))return '';
+  return (substr($start,8,2)==='01'&&$end===date('Y-m-t',strtotime($start)))?substr($start,0,7):'';
+ }
+ public function scr_goal_period_status($start,$end){
+  if(!$this->scr_goal_valid_dates($start,$end)||!$this->scr_goals_schema())return false;
+  $t=db_prefix().'scr_goal_period_closures';
+  $r=$this->db->where(['start_date'=>$start,'end_date'=>$end])->get($t)->row_array();
+  if($r){$r['_legacy_month']='';return $r;}
+  $month=$this->scr_goal_legacy_month($start,$end);
+  $old=db_prefix().'scr_goal_month_closures';
+  if($month!==''&&$this->db->table_exists($old)){
+   $r=$this->db->where('month',$month)->get($old)->row_array();
+   if($r){$r['_legacy_month']=$month;return $r;}
+  }
+  return false;
+ }
+ public function scr_goal_close_period($start,$end,$staffId){
+  if(!$this->scr_goal_valid_dates($start,$end)||$this->scr_goal_period_status($start,$end))return false;
+  $rows=$this->scr_goals_report($start,$end);
+  return $this->db->insert(db_prefix().'scr_goal_period_closures',['start_date'=>$start,'end_date'=>$end,'snapshot'=>json_encode($rows,JSON_UNESCAPED_UNICODE),'closed_at'=>date('Y-m-d H:i:s'),'closed_by'=>(int)$staffId]);
+ }
+ public function scr_goal_reopen_period($start,$end){
+  $closed=$this->scr_goal_period_status($start,$end);if(!$closed)return false;
+  if(!empty($closed['_legacy_month']))return $this->db->where('month',$closed['_legacy_month'])->delete(db_prefix().'scr_goal_month_closures');
+  return $this->db->where(['start_date'=>$start,'end_date'=>$end])->delete(db_prefix().'scr_goal_period_closures');
+ }
+ // Compatibility wrappers for historical monthly links and old admin actions.
+ public function scr_goal_month_status($month){if(!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$month))return false;$s=$month.'-01';return $this->scr_goal_period_status($s,date('Y-m-t',strtotime($s)));}
+ public function scr_goal_close_month($month,$staffId){if(!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$month))return false;$s=$month.'-01';return $this->scr_goal_close_period($s,date('Y-m-t',strtotime($s)),$staffId);}
+ public function scr_goal_reopen_month($month){if(!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$month))return false;$s=$month.'-01';return $this->scr_goal_reopen_period($s,date('Y-m-t',strtotime($s)));}
+ public function scr_goals_save($d){
+  if(!$this->scr_goals_schema())return ['ok'=>false,'message'=>'جدول اهداف بازه‌ای آماده نیست'];
+  $start=trim((string)($d['start_date']??''));$end=trim((string)($d['end_date']??''));
+  // Old CSV import compatibility, without requiring users to migrate spreadsheets.
+  if($start===''&&$end===''&&preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',(string)($d['month']??''))){$start=$d['month'].'-01';$end=date('Y-m-t',strtotime($start));}
+  if(!$this->scr_goal_valid_dates($start,$end))return ['ok'=>false,'message'=>'تاریخ شروع یا پایان نامعتبر است؛ تاریخ پایان نباید پیش از شروع باشد'];
+  if($this->scr_goal_period_status($start,$end))return ['ok'=>false,'message'=>'گزارش این بازه بسته شده است'];
+  $role=($d['role']??'seller')==='manager'?'manager':'seller';$staff=(int)($d['staff_id']??0);$type=(int)($d['sale_type_id']??0);$amount=$this->num($d['target_amount']??'');
+  if(!$staff||$amount===null||$amount<0)return ['ok'=>false,'message'=>'کارمند یا مبلغ هدف نامعتبر است'];
+  if(!$this->db->where('staffid',$staff)->get(db_prefix().'staff')->row())return ['ok'=>false,'message'=>'کارمند یافت نشد'];
+  $t=db_prefix().'scr_goal_period_targets';$key=['start_date'=>$start,'end_date'=>$end,'role'=>$role,'staff_id'=>$staff,'sale_type_id'=>$type];$old=$this->db->where($key)->get($t)->row_array();$now=date('Y-m-d H:i:s');
+  if($old)$ok=$this->db->where('id',$old['id'])->update($t,['target_amount'=>$amount,'updated_at'=>$now]);
+  else $ok=$this->db->insert($t,$key+['target_amount'=>$amount,'created_at'=>$now,'updated_at'=>$now]);
+  return ['ok'=>(bool)$ok,'message'=>$ok?'':'ذخیره هدف در دیتابیس ناموفق بود'];
+ }
+ public function scr_goals_delete($id){
+  if(!$this->scr_goals_schema())return false;
+  $t=db_prefix().'scr_goal_period_targets';$goal=$this->db->where('id',(int)$id)->get($t)->row_array();
+  if(!$goal||$this->scr_goal_period_status($goal['start_date'],$goal['end_date']))return false;
+  return $this->db->where('id',(int)$id)->delete($t);
+ }
+ public function scr_goals_copy_period($fromStart,$fromEnd,$toStart,$toEnd){
+  if(!$this->scr_goal_valid_dates($fromStart,$fromEnd)||!$this->scr_goal_valid_dates($toStart,$toEnd)||($fromStart===$toStart&&$fromEnd===$toEnd)||!$this->scr_goals_schema()||$this->scr_goal_period_status($toStart,$toEnd))return 0;
+  $t=db_prefix().'scr_goal_period_targets';$rows=$this->db->where(['start_date'=>$fromStart,'end_date'=>$fromEnd])->get($t)->result_array();$n=0;
+  foreach($rows as $r){
+   $key=['start_date'=>$toStart,'end_date'=>$toEnd,'role'=>$r['role'],'staff_id'=>$r['staff_id'],'sale_type_id'=>$r['sale_type_id']];
+   if($this->db->where($key)->get($t)->row())continue;
+   if($this->db->insert($t,$key+['target_amount'=>$r['target_amount'],'created_at'=>date('Y-m-d H:i:s'),'updated_at'=>date('Y-m-d H:i:s')]))$n++;
+  }
+  return $n;
+ }
+ public function scr_goals_copy($from,$to){
+  if(!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$from)||!preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$to))return 0;
+  $a=$from.'-01';$b=$to.'-01';return $this->scr_goals_copy_period($a,date('Y-m-t',strtotime($a)),$b,date('Y-m-t',strtotime($b)));
+ }
+ public function scr_goals_report($start,$end=null){
+  if($end===null&&preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',(string)$start)){$start.='-01';$end=date('Y-m-t',strtotime($start));}
+  if(!$this->scr_goal_valid_dates($start,$end)||!$this->scr_goals_schema())return [];
+  $closed=$this->scr_goal_period_status($start,$end);if($closed){$snapshot=json_decode($closed['snapshot'],true);return is_array($snapshot)?$snapshot:[];}
+  $t=db_prefix().'scr_goal_period_targets';
+  $goals=$this->db->select("g.*,CONCAT(s.firstname,' ',s.lastname) staff_name,st.name sale_type_name",false)
+   ->from($t.' g')->join(db_prefix().'staff s','s.staffid=g.staff_id','left')
+   ->join(db_prefix().'scr_sale_types st','st.legacy_id=g.sale_type_id OR st.id=g.sale_type_id','left')
+   ->where('g.start_date',$start)->where('g.end_date',$end)
+   ->order_by('g.role','ASC')->order_by('g.staff_id','ASC')->get()->result_array();
+  // Keep the existing payment-based achievement logic; only its dates change.
+  // Use a half-open interval to include payments on the selected end date.
+  $after=date('Y-m-d',strtotime($end.' +1 day'));
+  $p=db_prefix().'invoicepaymentrecords';$i=db_prefix().'invoices';$totals=[];
+  if($this->db->table_exists($p)&&$this->db->table_exists($i)){
+   $sf=$this->db->field_exists('sale_agent',$i)?'sale_agent':'addedfrom';
+   $tf=$this->db->field_exists('invoice_type',$i)?'invoice_type':($this->db->field_exists('sale_type_id',$i)?'sale_type_id':null);
+   $select='i.'.$sf.' seller_id,'.($tf?'i.'.$tf:'0').' sale_type_id,SUM(p.amount) amount';
+   $q=$this->db->select($select,false)->from($p.' p')->join($i.' i','i.id=p.invoiceid')
+    ->where('p.date >=',$start)->where('p.date <',$after)->where('p.amount >',0);
+   if($this->db->field_exists('status',$i))$q->where('i.status !=',5);
+   foreach($q->group_by(['i.'.$sf]+($tf?['i.'.$tf]:[]))->get()->result_array() as $r){
+    $sid=(int)$r['seller_id'];$type=(int)$r['sale_type_id'];
+    if($sid>0)$totals[$sid][$type]=($totals[$sid][$type]??0)+(float)$r['amount'];
+   }
+  }
+  $hier=[];$h=db_prefix().'scr_sales_hierarchy';
+  if($this->db->table_exists($h))foreach($this->db->where('active',1)->get($h)->result_array() as $r)$hier[(int)$r['manager_staff_id']][(int)$r['seller_staff_id']]=true;
+  foreach($goals as &$g){
+   $staff=(int)$g['staff_id'];$type=(int)$g['sale_type_id'];
+   $members=$g['role']==='manager'?array_keys($hier[$staff]??[]):[$staff];$actual=0;
    foreach(array_unique($members) as $sid){if($type===0)$actual+=array_sum($totals[$sid]??[]);else $actual+=(float)($totals[$sid][$type]??0);}
    $g['actual_amount']=$actual;$g['percent_achieved']=(float)$g['target_amount']>0?round(100*$actual/(float)$g['target_amount'],1):0;
-  }unset($g);return $goals;
+  }unset($g);
+  return $goals;
  }
+
 }

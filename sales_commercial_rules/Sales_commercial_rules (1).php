@@ -671,17 +671,41 @@ class Sales_commercial_rules extends AdminController{
   redirect(admin_url('sales_commercial_rules/sales_requests'));
  }
 
+ private function scr_goal_request_dates($source='get'){
+  $start=(string)($source==='post'?$this->input->post('start_date',true):$this->input->get('start_date',true));
+  $end=(string)($source==='post'?$this->input->post('end_date',true):$this->input->get('end_date',true));
+  if($start!==''||$end!=='')return [$start,$end];
+  // Maintain old saved monthly links without making month a UI dependency.
+  $month=(string)($source==='post'?$this->input->post('month',true):$this->input->get('month',true));
+  if(preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$month)){
+   $start=$month.'-01';return [$start,date('Y-m-t',strtotime($start))];
+  }
+  $start=date('Y-m-01');return [$start,date('Y-m-t',strtotime($start))];
+ }
+ private function scr_goal_url($start,$end,$tab='report'){
+  return admin_url('sales_commercial_rules/monthly_goals?start_date='.rawurlencode($start).'&end_date='.rawurlencode($end).'&tab='.$tab);
+ }
  public function monthly_goals(){
-  if(!is_admin())access_denied('invoices');$month=(string)$this->input->get('month',true);if(!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$month))$month=date('Y-m');
-  $data=['month'=>$month,'rows'=>$this->scr->scr_goals_report($month),'staff'=>$this->scr->staff_list(),'types'=>$this->scr->sale_types(),'goal_tab'=>$this->input->get('tab',true)==='settings'?'settings':'report','goal_closed'=>$this->scr->scr_goal_month_status($month)];$this->load->view('goals/index',$data);
+  if(!is_admin())access_denied('invoices');
+  list($start,$end)=$this->scr_goal_request_dates();
+  $data=['start_date'=>$start,'end_date'=>$end,'rows'=>$this->scr->scr_goals_report($start,$end),'staff'=>$this->scr->staff_list(),'types'=>$this->scr->sale_types(),'goal_tab'=>$this->input->get('tab',true)==='settings'?'settings':'report','goal_closed'=>$this->scr->scr_goal_period_status($start,$end)];
+  $this->load->view('goals/index',$data);
  }
  public function monthly_goal_month_action(){
   if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();
-  $month=(string)$this->input->post('month');$action=(string)$this->input->post('action');
-  if(!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$month))show_404();
-  $ok=$action==='close'?$this->scr->scr_goal_close_month($month,get_staff_user_id()):($action==='reopen'?$this->scr->scr_goal_reopen_month($month):false);
-  set_alert($ok?'success':'warning',$ok?'وضعیت گزارش ماه تغییر کرد':'امکان تغییر وضعیت ماه وجود ندارد');
-  redirect(admin_url('sales_commercial_rules/monthly_goals?month='.rawurlencode($month).'&tab=report'));
+  $requestedStart=(string)$this->input->post('start_date',true);
+  $requestedEnd=(string)$this->input->post('end_date',true);
+  $legacyMonth=(string)$this->input->post('month',true);
+  if(!$this->scr->scr_goal_valid_dates($requestedStart,$requestedEnd) && !preg_match('/^20\\d{2}-(0[1-9]|1[0-2])$/',$legacyMonth)){
+   set_alert('danger','بازه زمانی نامعتبر است؛ وضعیت گزارش تغییر نکرد');
+   redirect(admin_url('sales_commercial_rules/monthly_goals'));return;
+  }
+  list($start,$end)=$this->scr_goal_request_dates('post');
+  if(!$this->scr->scr_goal_valid_dates($start,$end)){set_alert('danger','بازه تاریخ نامعتبر است');redirect(admin_url('sales_commercial_rules/monthly_goals'));return;}
+  $action=(string)$this->input->post('action',true);
+  $ok=$action==='close'?$this->scr->scr_goal_close_period($start,$end,get_staff_user_id()):($action==='reopen'?$this->scr->scr_goal_reopen_period($start,$end):false);
+  set_alert($ok?'success':'warning',$ok?'وضعیت گزارش بازه انتخابی تغییر کرد':'امکان تغییر وضعیت این بازه وجود ندارد');
+  redirect($this->scr_goal_url($start,$end));
  }
  public function save_monthly_goal(){
   if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();
@@ -693,15 +717,44 @@ class Sales_commercial_rules extends AdminController{
   if(count($ids)>1000)$errors[]='تعداد افراد انتخاب‌شده بیش از حد مجاز است';
   if(!$errors){foreach($ids as $id){$item=$data;$item['staff_id']=$id;unset($item['staff_ids']);$r=$this->scr->scr_goals_save($item);if($r['ok'])$saved++;else $errors[]='کارمند '.$id.': '.$r['message'];}}
   set_alert($errors?'warning':'success',$saved.' هدف ذخیره شد'.($errors?'؛ '.count($errors).' خطا: '.implode('، ',array_slice($errors,0,3)):''));
-  redirect(admin_url('sales_commercial_rules/monthly_goals?month='.rawurlencode((string)$this->input->post('month')).'&tab=settings'));
+  list($start,$end)=$this->scr_goal_request_dates('post');
+  redirect($this->scr_goal_url($start,$end,'settings'));
  }
- public function delete_monthly_goal($id=0){if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();$this->scr->scr_goals_delete($id);redirect(admin_url('sales_commercial_rules/monthly_goals?tab=settings'));}
- public function copy_monthly_goals(){if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();$n=$this->scr->scr_goals_copy((string)$this->input->post('from_month'),(string)$this->input->post('to_month'));set_alert('success',$n.' هدف کپی شد');redirect(admin_url('sales_commercial_rules/monthly_goals?month='.rawurlencode((string)$this->input->post('to_month')).'&tab=settings'));}
+ public function delete_monthly_goal($id=0){
+  if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();
+  $ok=$this->scr->scr_goals_delete($id);
+  set_alert($ok?'success':'warning',$ok?'هدف حذف شد':'امکان حذف هدف وجود ندارد؛ شاید گزارش بسته شده است');
+  list($start,$end)=$this->scr_goal_request_dates('post');
+  redirect($this->scr_goal_url($start,$end,'settings'));
+ }
+ public function copy_monthly_goals(){
+  if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();
+  $fromStart=(string)$this->input->post('from_start_date',true);$fromEnd=(string)$this->input->post('from_end_date',true);
+  $toStart=(string)$this->input->post('to_start_date',true);$toEnd=(string)$this->input->post('to_end_date',true);
+  if(!$this->scr->scr_goal_valid_dates($fromStart,$fromEnd)||!$this->scr->scr_goal_valid_dates($toStart,$toEnd)){
+   set_alert('danger','تاریخ‌های مبدا یا مقصد نامعتبر هستند');redirect(admin_url('sales_commercial_rules/monthly_goals?tab=settings'));return;
+  }
+  $n=$this->scr->scr_goals_copy_period($fromStart,$fromEnd,$toStart,$toEnd);
+  set_alert($n?'success':'warning',$n.' هدف کپی شد؛ اهداف موجود مقصد تغییر نمی‌کنند');
+  redirect($this->scr_goal_url($toStart,$toEnd,'settings'));
+ }
  public function import_monthly_goals(){
-  if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();$file=$_FILES['goals_file']??null;$count=0;$errors=[];
-  if(!$file||$file['error']!==UPLOAD_ERR_OK||!is_uploaded_file($file['tmp_name'])||strtolower(pathinfo($file['name'],PATHINFO_EXTENSION))!=='csv'){set_alert('danger','فایل CSV معتبر انتخاب کنید');redirect(admin_url('sales_commercial_rules/monthly_goals'));return;}
-  $fh=fopen($file['tmp_name'],'r');$head=fgetcsv($fh);$expected=['month','role','staff_id','sale_type_id','target_amount'];if($head)$head[0]=preg_replace('/^\xEF\xBB\xBF/','',$head[0]);
-  if($head!==$expected){fclose($fh);set_alert('danger','ستون‌ها باید مطابق الگوی CSV باشند');redirect(admin_url('sales_commercial_rules/monthly_goals'));return;}
-  while(($row=fgetcsv($fh))!==false){if(count($row)!==5){$errors[]='ستون نامعتبر';continue;}$r=$this->scr->scr_goals_save(array_combine($expected,$row));if($r['ok'])$count++;else $errors[]=$r['message'];}fclose($fh);set_alert($errors?'warning':'success',$count.' هدف وارد شد؛ '.count($errors).' خطا');redirect(admin_url('sales_commercial_rules/monthly_goals'));
+  if(!is_admin())access_denied('invoices');if(strtoupper($this->input->method(TRUE))!=='POST')show_404();
+  $file=$_FILES['goals_file']??null;$count=0;$errors=[];
+  if(!$file||$file['error']!==UPLOAD_ERR_OK||!is_uploaded_file($file['tmp_name'])||strtolower(pathinfo($file['name'],PATHINFO_EXTENSION))!=='csv'){
+   set_alert('danger','فایل CSV معتبر انتخاب کنید');redirect(admin_url('sales_commercial_rules/monthly_goals?tab=settings'));return;
+  }
+  $fh=fopen($file['tmp_name'],'r');$head=fgetcsv($fh);
+  if($head)$head[0]=preg_replace('/^\\xEF\\xBB\\xBF/','',$head[0]);
+  $newHead=['start_date','end_date','role','staff_id','sale_type_id','target_amount'];
+  $oldHead=['month','role','staff_id','sale_type_id','target_amount'];
+  if($head!==$newHead&&$head!==$oldHead){fclose($fh);set_alert('danger','ستون‌ها باید مطابق الگوی جدید یا نسخه ماهانه قبلی باشند');redirect(admin_url('sales_commercial_rules/monthly_goals?tab=settings'));return;}
+  $line=1;
+  while(($row=fgetcsv($fh))!==false){$line++;if($line>4001){$errors[]='حداکثر ۴۰۰۰ ردیف قابل ورود است';break;}if(count($row)!==count($head)){$errors[]='ردیف '.$line.': تعداد ستون نامعتبر';continue;}
+   $r=$this->scr->scr_goals_save(array_combine($head,$row));if($r['ok'])$count++;else $errors[]='ردیف '.$line.': '.$r['message'];
+  }
+  fclose($fh);set_alert($errors?'warning':'success',$count.' هدف وارد شد؛ '.count($errors).' خطا'.($errors?'؛ '.implode('، ',array_slice($errors,0,3)):''));
+  redirect(admin_url('sales_commercial_rules/monthly_goals?tab=settings'));
  }
+
 }

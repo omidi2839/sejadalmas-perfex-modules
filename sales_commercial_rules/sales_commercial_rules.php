@@ -3,7 +3,7 @@ defined('BASEPATH') or exit('No direct script access allowed');
 /*
 Module Name: قواعد تجاری فروش
 Description: ماژول مستقل انواع فروش، قیمت نوع فروش و تخفیف گروه کالایی
-Version: 0.7.6.9.7.74
+Version: 0.7.6.9.7.75
 Requires at least: 2.3.*
 Author: Custom Development
 */
@@ -61,7 +61,7 @@ function scr_admin_init(){
  $CI->app_menu->add_sidebar_children_item('scr',['slug'=>'scr-commissions','name'=>'کمیسیون','href'=>admin_url('sales_commercial_rules/commission_center'),'position'=>5]);
  $CI->app_menu->add_sidebar_children_item('scr',['slug'=>'scr-rankings','name'=>_l('scr_rankings'),'href'=>admin_url('sales_commercial_rules/rankings'),'position'=>6]);
  $CI->app_menu->add_sidebar_children_item('scr',['slug'=>'scr-online-promotion','name'=>'قواعد ارتقاء آنلاین','href'=>admin_url('sales_commercial_rules/online_promotion'),'position'=>8]);
- $CI->app_menu->add_sidebar_children_item('scr',['slug'=>'scr-monthly-goals','name'=>'اهداف فروش ماهانه','href'=>admin_url('sales_commercial_rules/monthly_goals'),'position'=>7]);
+ $CI->app_menu->add_sidebar_children_item('scr',['slug'=>'scr-monthly-goals','name'=>'اهداف فروش دوره‌ای','href'=>admin_url('sales_commercial_rules/monthly_goals'),'position'=>7]);
  // 0.7.1: Daily cashier handover is an operational Sales function, not a Commercial Rules setting.
  // Register it under Perfex's native Sales menu.
  if(scr_cashier_can_own()||scr_cashier_can_review()||scr_cashier_can_settings()) $CI->app_menu->add_sidebar_children_item('sales',['slug'=>'scr-cashier','name'=>_l('scr_cashier_daily'),'href'=>admin_url('sales_commercial_rules/cashier'),'position'=>90]);
